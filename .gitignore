@@ -1,0 +1,19 @@
+# Runtime secrets and local configuration
+Proxmox-RAS-Provider.json
+*.local.json
+.env
+.env.*
+
+# Provider runtime data
+Proxmox-RAS-Provider.log*
+Proxmox-RAS-*State.json*
+Proxmox-RAS-VersionTasks.json*
+Proxmox-RAS-TaskTombstones.json*
+Proxmox-RAS-RecentDeletes.json*
+Backup-vNext*/
+
+# PowerShell and editor artifacts
+*.tmp
+*.bak
+.vscode/
+.idea/

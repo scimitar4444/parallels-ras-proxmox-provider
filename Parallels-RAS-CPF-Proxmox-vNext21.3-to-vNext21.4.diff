@@ -1,0 +1,231 @@
+--- /mnt/data/Parallels-RAS-Proxmox-vNext21.3-Paket/Parallels-RAS-Proxmox-vNext21.3/Parallels-RAS-CPF-Proxmox-Versioning-vNext21.3.ps1	2026-08-17 10:23:21.651568176 +0000
++++ /mnt/data/build_vnext21_4_clean/Parallels-RAS-Proxmox-vNext21.4/Parallels-RAS-CPF-Proxmox-Versioning-vNext21.4.ps1	2026-08-17 11:41:52.058774188 +0000
+@@ -1,4 +1,4 @@
+-# vNext21.3 Maintenance-State Hotfix: keeps RASIMG publication separate from the logical template state, preserves Parallels RAS control of client validation and gold-VM power, and repairs the vNext21.2 premature is_template transition; protocol version remains 1.0.0.
++# vNext21.4 Network-Cache Hotfix: prevents cached IP/MAC data from degrading into System.Collections.Hashtable, rejects corrupt cache entries, and keeps Parallels RAS client validation supplied with stable primitive address arrays; protocol version remains 1.0.0.
+ <#  
+ .SYNOPSIS  
+     Parallels RAS Custom Provider Sample Script for Proxmox VE
+@@ -25,6 +25,7 @@
+     vNext21.1 fixes PowerShell pipeline enumeration in recursive object copies so empty and single-element arrays remain arrays, normalizes cached network data before Count/index access, and runs a regression self-test during provider/initialize.
+     vNext21.2 removes the incorrect powered-off prerequisite from guests/convert(is_template=true). Parallels RAS may start the gold VM for its own client/agent validation before closing maintenance; the conversion is logical only and therefore accepts both running and stopped power states. RASIMG publication still requires a stopped source VM.
+     vNext21.3 fixes the remaining maintenance-state ordering defect: completing guests/snapshots/create no longer marks the gold VM as a template. The logical state remains false throughout RASIMG publication and Parallels client validation, and changes to true only when guests/convert(is_template=true) is explicitly processed (or when that explicit request was deferred onto an in-flight publish task).
++    vNext21.4 replaces the generic recursive-copy network cache with a typed primitive cache, rejects malformed entries instead of stringifying them as System.Collections.Hashtable, refreshes invalid entries immediately, and adds an initialization regression test for the real cache round-trip.
+     This script requires PowerShell 7 or later for best compatibility.
+ .NOTES  
+     File Name  : Parallels-RAS-CFP-Proxmox-package2-v2.ps1
+@@ -98,7 +99,7 @@
+ $writer.AutoFlush = $true
+ 
+ $script:ProviderNamePrefix = 'Proxmox:'
+-$script:ImplementationVersion = 'vNext21.3'
++$script:ImplementationVersion = 'vNext21.4'
+ $script:LogPath = 'C:\CFP Scripts\Proxmox-RAS-Provider.log'
+ $script:ProxmoxSession = $null
+ $script:ProxmoxWebSession = $null
+@@ -528,24 +529,112 @@
+         if ($null -ne $macProperty) { $macSource = $macProperty.Value }
+     }
+ 
+-    $ipv4 = @()
++    $ipv4 = [System.Collections.Generic.List[string]]::new()
+     foreach ($value in @($ipv4Source)) {
+-        if ($null -eq $value) { continue }
+-        $text = ([string]$value).Trim()
+-        if (-not [string]::IsNullOrWhiteSpace($text)) { $ipv4 += $text }
++        # Network protocol fields are primitive strings. Never coerce a complex
++        # object to text: [string]@{} becomes "System.Collections.Hashtable" and
++        # poisons the RAS client/agent validation loop.
++        if ($null -eq $value -or $value -isnot [string]) { continue }
++        $textValue = $value.Trim()
++        if ([string]::IsNullOrWhiteSpace($textValue)) { continue }
++        [System.Net.IPAddress]$parsedAddress = $null
++        if ([System.Net.IPAddress]::TryParse($textValue, [ref]$parsedAddress) -and
++            $parsedAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
++            $normalizedIp = $parsedAddress.ToString()
++            if (-not $ipv4.Contains($normalizedIp)) { [void]$ipv4.Add($normalizedIp) }
++        }
+     }
+ 
+-    $macs = @()
++    $macs = [System.Collections.Generic.List[string]]::new()
+     foreach ($value in @($macSource)) {
+-        if ($null -eq $value) { continue }
+-        $text = ([string]$value).Trim()
+-        if (-not [string]::IsNullOrWhiteSpace($text)) { $macs += $text.ToUpperInvariant() }
++        if ($null -eq $value -or $value -isnot [string]) { continue }
++        $textValue = $value.Trim()
++        if ($textValue -notmatch '^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$') { continue }
++        $normalizedMac = $textValue.Replace('-', ':').ToUpperInvariant()
++        if (-not $macs.Contains($normalizedMac)) { [void]$macs.Add($normalizedMac) }
++    }
++
++    return @{
++        IPv4Addresses = [string[]]$ipv4.ToArray()
++        MacAddresses  = [string[]]$macs.ToArray()
+     }
++}
++
++function New-VmNetworkCacheEntry {
++    param(
++        [Parameter(Mandatory = $true)][object]$NetworkData,
++        [Parameter(Mandatory = $true)][ValidateRange(1, 300)][int]$TtlSeconds
++    )
+ 
++    $normalized = ConvertTo-NormalizedNetworkData -NetworkData $NetworkData
+     return @{
+-        IPv4Addresses = @($ipv4 | Select-Object -Unique)
+-        MacAddresses  = @($macs | Select-Object -Unique)
++        expires_utc    = [DateTime]::UtcNow.AddSeconds($TtlSeconds)
++        ipv4_addresses = [string[]]@($normalized.IPv4Addresses)
++        mac_addresses  = [string[]]@($normalized.MacAddresses)
++    }
++}
++
++function ConvertFrom-VmNetworkCacheEntry {
++    param([AllowNull()][object]$Entry)
++
++    if ($null -eq $Entry) { return $null }
++
++    $hasExpiry = $false
++    $hasIpv4 = $false
++    $hasMacs = $false
++    $expirySource = $null
++    $ipv4Source = $null
++    $macSource = $null
++
++    if ($Entry -is [System.Collections.IDictionary]) {
++        $hasExpiry = $Entry.Contains('expires_utc')
++        $hasIpv4 = $Entry.Contains('ipv4_addresses')
++        $hasMacs = $Entry.Contains('mac_addresses')
++        if ($hasExpiry) { $expirySource = $Entry['expires_utc'] }
++        if ($hasIpv4) { $ipv4Source = $Entry['ipv4_addresses'] }
++        if ($hasMacs) { $macSource = $Entry['mac_addresses'] }
++    }
++    else {
++        $expiryProperty = $Entry.PSObject.Properties['expires_utc']
++        $ipv4Property = $Entry.PSObject.Properties['ipv4_addresses']
++        $macProperty = $Entry.PSObject.Properties['mac_addresses']
++        $hasExpiry = ($null -ne $expiryProperty)
++        $hasIpv4 = ($null -ne $ipv4Property)
++        $hasMacs = ($null -ne $macProperty)
++        if ($hasExpiry) { $expirySource = $expiryProperty.Value }
++        if ($hasIpv4) { $ipv4Source = $ipv4Property.Value }
++        if ($hasMacs) { $macSource = $macProperty.Value }
++    }
++
++    if (-not $hasExpiry -or -not $hasIpv4 -or -not $hasMacs -or $null -eq $expirySource) { return $null }
++
++    $expiresUtc = [DateTime]::MinValue
++    try { $expiresUtc = ([DateTime]$expirySource).ToUniversalTime() }
++    catch { return $null }
++    if ([DateTime]::UtcNow -ge $expiresUtc) { return $null }
++
++    $rawIpv4 = @($ipv4Source)
++    $rawMacs = @($macSource)
++    foreach ($value in $rawIpv4) {
++        if ($null -eq $value -or $value -isnot [string]) { return $null }
++    }
++    foreach ($value in $rawMacs) {
++        if ($null -eq $value -or $value -isnot [string]) { return $null }
++    }
++
++    $normalized = ConvertTo-NormalizedNetworkData -NetworkData @{
++        IPv4Addresses = [string[]]$rawIpv4
++        MacAddresses  = [string[]]$rawMacs
++    }
++
++    # A malformed primitive string is also corruption. Do not return a partially
++    # normalized cache hit; evict it and immediately query the guest agent again.
++    if (@($normalized.IPv4Addresses).Count -ne $rawIpv4.Count -or
++        @($normalized.MacAddresses).Count -ne $rawMacs.Count) {
++        return $null
+     }
++
++    return $normalized
+ }
+ 
+ function Invoke-ProviderInternalSelfTest {
+@@ -599,6 +688,48 @@
+     if (-not ($normalizedSingle.MacAddresses -is [System.Array]) -or @($normalizedSingle.MacAddresses).Count -ne 1 -or [string]$normalizedSingle.MacAddresses[0] -ne 'BC:24:11:AA:BB:CC') {
+         throw 'Internal self-test failed: single network MAC data was not normalized correctly'
+     }
++
++    # Exercise the actual vNext21.4 cache write/read representation, not only
++    # the generic object copier. This is the round-trip that failed in vNext21.3.
++    $cacheProbeKey = '__vNext21.4_network_cache_selftest__'
++    $script:VmNetworkCache[$cacheProbeKey] = New-VmNetworkCacheEntry -NetworkData @{
++        IPv4Addresses = [string[]]@('192.0.2.10')
++        MacAddresses  = [string[]]@('BC:24:11:D1:D4:6D')
++    } -TtlSeconds 60
++    try {
++        $cacheProbeResult = ConvertFrom-VmNetworkCacheEntry -Entry $script:VmNetworkCache[$cacheProbeKey]
++        if ($null -eq $cacheProbeResult -or
++            -not ($cacheProbeResult.IPv4Addresses -is [System.Array]) -or
++            @($cacheProbeResult.IPv4Addresses).Count -ne 1 -or
++            [string]$cacheProbeResult.IPv4Addresses[0] -ne '192.0.2.10' -or
++            -not ($cacheProbeResult.MacAddresses -is [System.Array]) -or
++            @($cacheProbeResult.MacAddresses).Count -ne 1 -or
++            [string]$cacheProbeResult.MacAddresses[0] -ne 'BC:24:11:D1:D4:6D') {
++            throw 'Internal self-test failed: VM network cache round-trip changed IPv4/MAC values or collection types'
++        }
++    }
++    finally {
++        [void]$script:VmNetworkCache.Remove($cacheProbeKey)
++    }
++
++    $invalidCacheProbe = @{
++        expires_utc    = [DateTime]::UtcNow.AddMinutes(1)
++        ipv4_addresses = @(@{ invalid = 'complex-object' })
++        mac_addresses  = @(@{ invalid = 'complex-object' })
++    }
++    $invalidCacheResult = ConvertFrom-VmNetworkCacheEntry -Entry $invalidCacheProbe
++    if ($null -ne $invalidCacheResult) {
++        throw 'Internal self-test failed: corrupt VM network cache entry was accepted'
++    }
++
++    $expiredCacheProbe = New-VmNetworkCacheEntry -NetworkData @{
++        IPv4Addresses = [string[]]@('192.0.2.10')
++        MacAddresses  = [string[]]@('BC:24:11:D1:D4:6D')
++    } -TtlSeconds 60
++    $expiredCacheProbe['expires_utc'] = [DateTime]::UtcNow.AddSeconds(-1)
++    if ($null -ne (ConvertFrom-VmNetworkCacheEntry -Entry $expiredCacheProbe)) {
++        throw 'Internal self-test failed: expired VM network cache entry was accepted'
++    }
+ }
+ 
+ function Get-FileCacheStamp {
+@@ -2785,10 +2916,14 @@
+ 
+     $cacheKey = Get-VmNetworkCacheKey -Node $Node -VmId $VmId -Config $cfgObject
+     if ($QueryGuestAgent -and $script:VmNetworkCache.ContainsKey($cacheKey)) {
+-        $cached = $script:VmNetworkCache[$cacheKey]
+-        if ($null -ne $cached -and [DateTime]::UtcNow -lt [DateTime]$cached.expires_utc) {
+-            return ConvertTo-NormalizedNetworkData -NetworkData (Copy-ObjectRecursive -InputObject $cached.value)
++        $cachedNetworkData = ConvertFrom-VmNetworkCacheEntry -Entry $script:VmNetworkCache[$cacheKey]
++        if ($null -ne $cachedNetworkData) {
++            Write-TraceLog ("VM network cache hit for VM [{0}]: IPs=[{1}], MACs=[{2}]" -f `
++                $VmId, (@($cachedNetworkData.IPv4Addresses) -join ','), (@($cachedNetworkData.MacAddresses) -join ','))
++            return $cachedNetworkData
+         }
++
++        Write-DebugLog "Discarding expired or invalid VM network cache entry for VM [$VmId]; querying guest agent immediately."
+         [void]$script:VmNetworkCache.Remove($cacheKey)
+     }
+ 
+@@ -2844,10 +2979,11 @@
+         $config = Get-ProviderConfig
+         $ttl = if (@($result.IPv4Addresses).Count -gt 0) { [int]$config.network_cache_seconds } else { [int]$config.network_negative_cache_seconds }
+         if ($ttl -gt 0) {
+-            $script:VmNetworkCache[$cacheKey] = @{
+-                expires_utc = [DateTime]::UtcNow.AddSeconds($ttl)
+-                value       = Copy-ObjectRecursive -InputObject $result
+-            }
++            # Store only primitive typed arrays. Do not pass network protocol data
++            # through the generic recursive object copier.
++            $script:VmNetworkCache[$cacheKey] = New-VmNetworkCacheEntry -NetworkData $result -TtlSeconds $ttl
++            Write-TraceLog ("VM network cache stored for VM [{0}]: ttl=[{1}s], IPs=[{2}], MACs=[{3}]" -f `
++                $VmId, $ttl, (@($result.IPv4Addresses) -join ','), (@($result.MacAddresses) -join ','))
+         }
+     }
+ 

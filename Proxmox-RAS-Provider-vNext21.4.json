@@ -1,0 +1,191 @@
+{
+  "storage": "local-zfs",
+  "debug_logging": false,
+  "placement": "least_loaded",
+  "guests_polling_rate": 5,
+  "tasks_polling_rate": 10,
+  "task_observation_horizon_seconds": 14400,
+  "clone_ready_timeout_seconds": 900,
+  "api_connection_timeout_seconds": 5,
+  "api_operation_timeout_seconds": 20,
+  "api_get_max_retries": 2,
+  "api_get_retry_interval_seconds": 1,
+  "inventory_cache_seconds": 2,
+  "vm_config_cache_seconds": 60,
+  "vm_status_cache_seconds": 2,
+  "network_cache_seconds": 30,
+  "network_negative_cache_seconds": 1,
+  "node_health_cache_seconds": 10,
+  "storage_content_cache_seconds": 2,
+  "minimum_storage_free_gb": 20,
+  "minimum_storage_free_percent": 10,
+  "state_backup_generations": 3,
+  "completed_task_ttl_seconds": 1800,
+  "failed_task_ttl_seconds": 86400,
+  "preferred_ipv4_cidrs": [
+    "192.0.2.0/24"
+  ],
+  "gold_vmid": 300,
+  "rasimg_vmid_pool_start": 301,
+  "rasimg_vmid_pool_end": 350,
+  "session_vmid_pool_start": 351,
+  "session_vmid_pool_end": 399,
+  "compute_nodes": [
+    {
+      "name": "pve01",
+      "enabled": true
+    }
+  ],
+  "_documentation": {
+    "purpose": "Konfiguration des Parallels-RAS-Custom-Providers fuer Proxmox. Der Bereich _documentation wird vom Provider ignoriert.",
+    "active_layout": {
+      "300": "Persistentes, veraenderbares Goldimage (keine physische Proxmox-Template-VM).",
+      "301-350": "Interne, unveraenderliche RASIMG-Templates. Reicht fuer maximal 5 RAS-Versionen auf bis zu 7 Nodes und Reserve.",
+      "351-399": "Vom Provider erzeugte RDS-Session-Hosts.",
+      "400+": "Fuer andere VMs des Proxmox-Clusters vorgesehen."
+    },
+    "settings": {
+      "storage": "Lokaler Proxmox-Storage, auf jedem aktivierten Compute-Node unter demselben Namen vorhanden.",
+      "debug_logging": "false fuer ruhiges Produktionslog; true nur zeitweise fuer Diagnose.",
+      "placement": "least_loaded verteilt neue/recreatete Hosts auf den aktuell am wenigsten belegten gesunden Node; round_robin verteilt strikt der Reihe nach.",
+      "guests_polling_rate": "RAS-Abfrageintervall fuer VM-Zustaende in Sekunden.",
+      "tasks_polling_rate": "RAS-Abfrageintervall fuer laenger laufende Proxmox-Tasks in Sekunden.",
+      "task_observation_horizon_seconds": "Maximale Zeit, in der RAS einen Provider-Task beobachten kann. 14400 = 4 Stunden, ausreichend fuer spaetere Multi-Node-Publishes.",
+      "clone_ready_timeout_seconds": "Maximale Zeit bis ein neuer Session-Host laeuft und eine bevorzugte IPv4-Adresse ueber den QEMU Guest Agent liefert.",
+      "api_connection_timeout_seconds": "Verbindungs-Timeout fuer Proxmox-API-Aufrufe.",
+      "api_operation_timeout_seconds": "Maximale Dauer eines einzelnen API-Aufrufs. Mutierende Aufrufe werden nicht automatisch wiederholt.",
+      "api_get_max_retries": "Nur idempotente GET-Aufrufe duerfen begrenzt wiederholt werden.",
+      "inventory_cache_seconds": "Sehr kurzer Cache fuer /cluster/resources; reduziert API-Last ohne sichtbare Provisionierungsverzoegerung.",
+      "vm_config_cache_seconds": "Cache fuer weitgehend statische VM-Konfigurationen. Jede mutierende Aktion leert den Cache.",
+      "network_cache_seconds": "Typisierter Cache fuer erfolgreiche QEMU-Guest-Agent-IP-Abfragen. vNext21.4 speichert ausschliesslich validierte primitive IPv4-/MAC-String-Arrays; 0 deaktiviert den Cache.",
+      "network_negative_cache_seconds": "Kurzer typisierter Cache, solange beim Booten noch keine IP verfuegbar ist. 0 deaktiviert den negativen Cache.",
+      "minimum_storage_free_gb": "Node wird nicht fuer neue Bereitstellung verwendet, wenn weniger GiB frei sind. 0 deaktiviert den absoluten Schwellwert.",
+      "minimum_storage_free_percent": "Node wird nicht fuer neue Bereitstellung verwendet, wenn der freie Anteil unterschritten wird. 0 deaktiviert den prozentualen Schwellwert.",
+      "state_backup_generations": "Anzahl rollierender, automatisch validierter Sicherungsgenerationen je JSON-State-Datei.",
+      "completed_task_ttl_seconds": "Erfolgreiche terminale Task-Ergebnisse bleiben so lange idempotent abrufbar, inklusive clone_id.",
+      "failed_task_ttl_seconds": "Fehlgeschlagene terminale Task-Ergebnisse und Diagnosekontext bleiben fuer diesen Zeitraum erhalten.",
+      "preferred_ipv4_cidrs": "Prioritaetsreihenfolge fuer die an RAS gemeldete IPv4-Adresse. 192.0.2.0/24 ist hier nur ein reserviertes Dokumentationsbeispiel und muss ersetzt werden.",
+      "compute_nodes": "Nur enabled=true Nodes erhalten neue RASIMGs und Session-Hosts. Ein neuer Node kann zuerst mit enabled=false vorbereitet werden.",
+      "api_get_retry_interval_seconds": "Grundwartezeit zwischen Wiederholungen idempotenter GET-Aufrufe; kleiner Zufalls-Jitter verhindert gleichzeitige Retry-Spitzen.",
+      "vm_status_cache_seconds": "Kurzer Cache fuer status/current-Fallbacks; cluster/resources bleibt die primaere Quelle im normalen Polling.",
+      "node_health_cache_seconds": "Cache fuer Node- und Storage-Gesundheit. Offline Nodes werden bei neuer Bereitstellung ausgeschlossen, ohne die gesamte Provider-Verbindung abzubrechen, solange mindestens ein Node gesund ist.",
+      "storage_content_cache_seconds": "Sehr kurzer Cache fuer ZFS-Storage-Inhalte; vor einem destruktiven RASIMG-Delete wird er explizit verworfen.",
+      "configuration_file": "Proxmox-RAS-Provider.json ist seit vNext21 verpflichtend. Fehlende, leere, unbekannte oder ungueltige Einstellungen lassen provider/initialize absichtlich fehlschlagen, statt mit unpassenden Defaults zu provisionieren.",
+      "maintenance_state": "Seit vNext21.3 veraendert die RASIMG-Publikation den logischen Template-Status nicht. is_template wird erst durch den ausdruecklichen CPF-Aufruf guests/convert mit is_template=true gesetzt."
+    },
+    "placement_variants": {
+      "single_node_least_loaded": {
+        "placement": "least_loaded",
+        "compute_nodes": [
+          {
+            "name": "pve01",
+            "enabled": true
+          }
+        ]
+      },
+      "prepare_second_node_disabled": {
+        "placement": "least_loaded",
+        "compute_nodes": [
+          {
+            "name": "pve01",
+            "enabled": true
+          },
+          {
+            "name": "pve02",
+            "enabled": false
+          }
+        ]
+      },
+      "two_nodes_least_loaded": {
+        "placement": "least_loaded",
+        "compute_nodes": [
+          {
+            "name": "pve01",
+            "enabled": true
+          },
+          {
+            "name": "pve02",
+            "enabled": true
+          }
+        ]
+      },
+      "three_nodes_round_robin": {
+        "placement": "round_robin",
+        "compute_nodes": [
+          {
+            "name": "pve01",
+            "enabled": true
+          },
+          {
+            "name": "pve02",
+            "enabled": true
+          },
+          {
+            "name": "pve03",
+            "enabled": true
+          }
+        ]
+      },
+      "seven_nodes_least_loaded": {
+        "placement": "least_loaded",
+        "compute_nodes": [
+          {
+            "name": "pve01",
+            "enabled": true
+          },
+          {
+            "name": "pve02",
+            "enabled": true
+          },
+          {
+            "name": "pve03",
+            "enabled": true
+          },
+          {
+            "name": "pve04",
+            "enabled": true
+          },
+          {
+            "name": "pve05",
+            "enabled": true
+          },
+          {
+            "name": "pve06",
+            "enabled": true
+          },
+          {
+            "name": "pve07",
+            "enabled": true
+          }
+        ]
+      }
+    },
+    "operational_notes": [
+      "Die Konfigurationsdatei ist verpflichtend; der Installer fuehrt vorhandene Farmwerte mit neuen vNext21-Optionen zusammen und validiert sie vor dem Dienststart.",
+      "Parallels RAS behaelt die Kontrolle ueber Start und Stopp der Gold-VM 300. guests/convert(is_template=true) ist rein logisch und akzeptiert die VM laufend oder gestoppt; nur guests/snapshots/create verlangt fuer eine konsistente RASIMG-Publikation eine gestoppte Quelle.",
+      "Neue oder recreatete Hosts werden ausgeglichen; laufende Hosts werden nicht allein zum Rebalancing migriert oder geloescht.",
+      "Eine neue RAS-Version erzeugt pro aktiviertem Node ein lokales RASIMG. Alte Versionen werden durch das Aktivieren eines neuen Nodes nicht automatisch nachverteilt.",
+      "QEMU Guest Agent ist im Goldimage Pflicht, weil der Provider erst nach erfolgreicher IPv4-Erkennung fertig meldet.",
+      "allow_insecure_tls gehoert zu den Parallels-Provider-Verbindungseinstellungen, nicht in diese Datei. Nach Installation eines vertrauenswuerdigen Proxmox-Zertifikats auf false setzen.",
+      "Die State-Dateien und ihre .bak-Generationen gehoeren in die regulaere Serversicherung des Parallels-RAS-Provider-Hosts."
+    ],
+    "implementation": "vNext21.4",
+    "stability_features": [
+      "Kurze, gezielt invalidierte API-, VM-Konfigurations-, Netzwerk- und JSON-State-Caches reduzieren die Proxmox-API-Last.",
+      "GET-Aufrufe besitzen begrenzte Timeouts und werden nur bei klar transienten Transport-/Gatewayfehlern wiederholt; POST/PUT/DELETE werden nie blind wiederholt.",
+      "JSON-State wird atomar geschrieben, nachgelesen, in drei Generationen gesichert und bei beschaedigter Primaerdatei automatisch aus der neuesten gueltigen Generation repariert.",
+      "Clone-, Restore- und Versions-Delete-Ergebnisse bleiben als persistente Tombstones idempotent abrufbar.",
+      "Der RASIMG-Delete prueft ZFS-Child-Volumes und noch nicht sichtbare Pending-Clones und arbeitet mit einem persistenten Delete-Intent.",
+      "Neue Hosts werden nur auf aktuell gesunden Nodes mit aktivem Storage und ausreichender freier Kapazitaet erstellt.",
+      "Der Installer validiert Windows PowerShell und PowerShell 7, sichert den bestehenden Stand konsistent und rollt bei Fehlern automatisch zurueck.",
+      "Unbekannte Konfigurationsschluessel und ungueltige Boolean-Werte werden fail-fast abgewiesen, damit Tippfehler nicht still mit Defaults weiterlaufen."
+    ],
+    "known_boundaries": [
+      "Der mitgelieferte Stand wurde in einer Single-Node-Umgebung laufzeitgetestet; Multi-Node-Betrieb muss in der eigenen Umgebung separat validiert werden.",
+      "local-zfs liefert lokale Provisionierungsredundanz durch ein RASIMG pro Node, aber keine Storage-HA fuer bereits laufende Linked Clones.",
+      "TLS-Zertifikatspruefung wird in den Parallels-Provider-Verbindungseinstellungen gesteuert. Nach einem vertrauenswuerdigen Proxmox-Zertifikat allow_insecure_tls=false setzen.",
+      "Ein seltener Verbindungsabbruch exakt nach Annahme eines mutierenden Proxmox-Auftrags, aber vor Empfang der UPID, kann nur durch spaetere Reconciliation vollstaendig aufgeloest werden; mutierende Requests werden deshalb bewusst nicht automatisch wiederholt."
+    ],
+    "network_cache_vnext21_4": "vNext21.4 trennt den VM-Netzwerkcache von der generischen rekursiven Objektkopie. Jeder Cachetreffer wird auf Ablaufzeit, primitive Stringtypen sowie gueltige IPv4-/MAC-Formate geprueft; ungueltige Eintraege werden verworfen und sofort ueber den QEMU Guest Agent erneuert."
+  }
+}
