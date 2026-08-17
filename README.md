@@ -1,5 +1,7 @@
 # Parallels RAS Custom Provider für Proxmox VE
 
+Deutsch | [English](README.en.md)
+
 PowerShell-basierter Custom Provider zur Anbindung von Proxmox VE an Parallels RAS. Der Stand `vNext21.4` behebt eine Typkorruption im VM-Netzwerkcache und enthält die zuvor entwickelten Funktionen für RASIMG-Versionierung, VM-Platzierung, Wartungszustände und robuste Proxmox-API-Aufrufe.
 
 > **Wichtig:** Dies ist eine angepasste, nicht offiziell unterstützte Provider-Variante. Vor dem Produktiveinsatz in einer Testumgebung prüfen. API-Zugangsdaten gehören ausschließlich in die Parallels-RAS-Verbindungseinstellungen und niemals in dieses Repository.
